@@ -49,15 +49,6 @@ def create_app() -> FastAPI:
     # Register API v1 routes
     app.include_router(api_v1_router, prefix="/api/v1")
 
-    @app.get("/", tags=["Root"])
-    def root():
-        return {
-            "app": settings.app_name,
-            "version": settings.app_version,
-            "docs": "/docs",
-            "api_v1": "/api/v1",
-        }
-
     return app
 
 

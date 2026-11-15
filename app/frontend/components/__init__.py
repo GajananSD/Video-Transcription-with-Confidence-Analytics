@@ -1,4 +1,5 @@
 """Frontend UI Components Package."""
+from .styles import inject_styles
 from .charts import (
     render_confidence_histogram,
     render_confidence_scatter,
@@ -17,4 +18,5 @@ __all__ = [
     "render_speech_timeline",
     "render_accessible_tables",
     "render_accessible_transcript",
+    "inject_styles",
 ]

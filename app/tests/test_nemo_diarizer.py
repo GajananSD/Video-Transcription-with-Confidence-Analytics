@@ -23,6 +23,26 @@ import pytest
 
 from engine.nemo_diarizer import NemoMsddDiarizer
 
+_REAL_NEMO_AVAILABLE, _REAL_NEMO_REASON = NemoMsddDiarizer().is_available()
+
+
+@pytest.fixture(autouse=True)
+def _fake_nemo_env(tmp_path_factory, monkeypatch):
+    """Provide placeholder NeMo interpreter/checkpoint when no real NeMo env exists.
+
+    These are unit tests: the worker subprocess is mocked, so only file
+    existence matters for ``is_available()``.
+    """
+    if _REAL_NEMO_AVAILABLE:
+        return
+    fake_dir = tmp_path_factory.mktemp("fake_nemo")
+    fake_py = fake_dir / "python"
+    fake_py.touch(mode=0o755)
+    fake_ckpt = fake_dir / "diar_msdd_telephonic.nemo"
+    fake_ckpt.touch()
+    monkeypatch.setenv("NEMO_PYTHON", str(fake_py))
+    monkeypatch.setenv("NEMO_MSDD_CHECKPOINT", str(fake_ckpt))
+
 
 def test_nemo_diarizer_availability_checks(tmp_path: Path):
     """Test environment and checkpoint detection."""

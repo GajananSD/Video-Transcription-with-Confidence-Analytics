@@ -207,10 +207,20 @@ class Phase20SpeechEngine(BaseSpeechEngine):
         except ImportError:
             has_cuda = False
 
-        if device is None:
+        # "auto" (or None) means: use the GPU if one is available, otherwise the CPU.
+        requested = (device or "auto").strip().lower()
+        if requested == "auto":
             self.device = "cuda" if has_cuda else "cpu"
+        elif requested.startswith("cuda") and not has_cuda:
+            logger.warning("DEVICE=%s requested but no CUDA GPU is available; falling back to CPU.", device)
+            self.device = "cpu"
+            compute_type = None  # GPU precisions such as float16 are not valid on CPU
         else:
             self.device = device
+        logger.info("Inference device: %s (CUDA available: %s)", self.device, has_cuda)
+
+        if compute_type is not None and compute_type.strip().lower() == "auto":
+            compute_type = None
 
         if compute_type is None:
             # On 4GB GPUs (e.g. RTX 3050 Laptop), large-v3 requires int8 to fit comfortably in VRAM
@@ -622,8 +632,18 @@ class Phase20SpeechEngine(BaseSpeechEngine):
 
         speakers = sorted(list({w.speaker for w in aligned_words}))
         real_speakers = [s for s in speakers if s != "SPEAKER_UNASSIGNED"]
-        speakers_detected_count = len(real_speakers) if diar_status in ("DIARIZATION_AVAILABLE", "EXTERNAL_RTTM") else 0
-        detected_speakers_list = real_speakers if diar_status in ("DIARIZATION_AVAILABLE", "EXTERNAL_RTTM") else []
+        diarization_succeeded = diar_status in (
+            "DIARIZATION_AVAILABLE",
+            "EXTERNAL_RTTM",
+            "PYANNOTE_COMMUNITY_DIARIZATION",
+        )
+        speakers_detected_count = len(real_speakers) if diarization_succeeded else 0
+        detected_speakers_list = real_speakers if diarization_succeeded else []
+        diarization_model = {
+            "DIARIZATION_AVAILABLE": "diar_msdd_telephonic.nemo + TitaNet-Large",
+            "PYANNOTE_COMMUNITY_DIARIZATION": "pyannote/speaker-diarization-3.1",
+            "EXTERNAL_RTTM": "external RTTM",
+        }.get(diar_status)
 
         speaker_dist: Dict[str, float] = {}
         for turn in turns:
@@ -643,7 +663,7 @@ class Phase20SpeechEngine(BaseSpeechEngine):
             "speaker_distribution": speaker_dist,
             "alignment_model": "wav2vec2_fairseq_base_ls960_asr_ls960.pth",
             "alignment_method": "Native-Wav2Vec2-CTC",
-            "diarization_model": "diar_msdd_telephonic.nemo + TitaNet-Large",
+            "diarization_model": diarization_model,
             "diarization_status": diar_status,
             "diarization_blocker": diar_blocker,
         }
@@ -772,9 +792,16 @@ class Phase20SpeechEngine(BaseSpeechEngine):
             import torch
 
             logger.info("Running real Pyannote speaker diarization with resolved Hugging Face token...")
+            # pyannote.audio 3.x takes `use_auth_token`; 4.x renamed it to `token`.
+            import inspect as _inspect
+            try:
+                _fp_params = _inspect.signature(Pipeline.from_pretrained).parameters
+            except (TypeError, ValueError):
+                _fp_params = {}
+            _auth_kw = "token" if "token" in _fp_params else "use_auth_token"
             pipeline = Pipeline.from_pretrained(
                 "pyannote/speaker-diarization-3.1",
-                use_auth_token=self.hf_token,
+                **{_auth_kw: self.hf_token},
             )
             if pipeline is None:
                 auth_err = (
@@ -787,7 +814,20 @@ class Phase20SpeechEngine(BaseSpeechEngine):
 
             if self.device == "cuda" and torch.cuda.is_available():
                 pipeline.to(torch.device("cuda"))
-            diar = pipeline(str(audio_path))
+            # Feed a preloaded waveform so pyannote does not depend on its own
+            # (torchcodec-based) audio decoding, which is fragile across torch builds.
+            try:
+                import soundfile as sf
+                _wav, _sr = sf.read(str(audio_path), dtype="float32", always_2d=True)
+                diar_input: Any = {
+                    "waveform": torch.from_numpy(_wav.T.copy()),
+                    "sample_rate": int(_sr),
+                }
+            except Exception:
+                diar_input = str(audio_path)
+            diar = pipeline(diar_input)
+            # pyannote.audio 4.x returns a DiarizeOutput wrapper around the Annotation.
+            diar = getattr(diar, "speaker_diarization", diar)
             segments = []
             for turn, _, speaker in diar.itertracks(yield_label=True):
                 segments.append({

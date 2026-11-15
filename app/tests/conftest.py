@@ -3,7 +3,14 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
+
+# Isolate the test suite from the real application database and storage so that
+# running pytest never touches (or "recovers"/fails) jobs of a live server.
+_TEST_ROOT = Path(tempfile.mkdtemp(prefix="cia_app_tests_"))
+os.environ["APP_DB_PATH"] = str(_TEST_ROOT / "test_app.db")
+os.environ.setdefault("STORAGE_DIR", str(_TEST_ROOT / "storage"))
 
 # Add app directory to sys.path
 APP_DIR = Path(__file__).resolve().parents[1]

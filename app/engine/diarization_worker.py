@@ -1,7 +1,7 @@
 """Isolated NVIDIA NeMo MSDD / TitaNet Diarization Worker CLI.
 
 Executes strictly within the isolated 'cs698b_nemo' environment:
-/home/priyanka/anaconda3/envs/cs698b_nemo/bin/python
+(configured via the NEMO_PYTHON environment variable)
 
 This script has ZERO imports from the host application to maintain 100%
 dependency isolation and runtime independence.

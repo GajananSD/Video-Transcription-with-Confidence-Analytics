@@ -4,7 +4,7 @@ Exercises actual Streamlit frontend orchestration using native `AppTest` facilit
 - Test B1: Completed historical transcript requires ZERO status-polling calls.
 - Test B2: Active processing job polls strictly using actual `job_id`.
 - Test B3: Repeated switching between past recordings (A -> B -> A -> B).
-- Test B4: Switching across all three workflow modes without state leakage.
+- Test B4: Upload + recent-recordings layout opens recordings without state leakage.
 - Test B5: Ingested recording without transcript or job displays un-transcribed state.
 - Test B6: Unexpected backend API failures (HTTP 500, network errors) are visibly surfaced.
 """
@@ -74,15 +74,12 @@ def test_b1_completed_transcript_zero_status_polling():
                 transcript_call_urls.append(url)
                 resp.status_code = 200
                 resp.json.return_value = transcript_payload
-            elif "/status" in url:
+            elif "/transcriptions/" in url and url.endswith("/status"):
                 status_call_urls.append(url)
                 resp.status_code = 404
             elif "/analytics" in url:
                 resp.status_code = 200
                 resp.json.return_value = {"brier_score": 0.05, "ece": 0.02, "reliability_diagram": []}
-            elif "/feedback/vocabulary" in url:
-                resp.status_code = 200
-                resp.json.return_value = []
             else:
                 resp.status_code = 404
             return resp
@@ -91,8 +88,8 @@ def test_b1_completed_transcript_zero_status_polling():
 
         at = AppTest.from_file(SCRIPT_PATH)
         at.run()
-        # Navigate to Past Ingested Recordings
-        at.radio[0].set_value("📂 Past Ingested Recordings").run()
+        # Open the historical recording from the Recent recordings list
+        at.selectbox(key="past_recording_selector").set_value(hist_rec_id).run()
 
         # Verify no script crashes occurred
         assert len(at.exception) == 0
@@ -164,7 +161,6 @@ def test_b2_active_job_polls_using_actual_job_id():
         at = AppTest.from_file(SCRIPT_PATH)
         at.run()
         # Pre-seed session state simulating freshly dispatched job
-        at.radio[0].set_value("📤 Upload New Audio / Video").run()
         at.session_state["recording_id"] = rec_id
         at.session_state["job_id"] = job_id
         at.session_state["filename"] = "uploaded.wav"
@@ -224,9 +220,6 @@ def test_b3_repeated_switching_between_past_recordings():
             elif "/analytics" in url:
                 resp.status_code = 200
                 resp.json.return_value = {"brier_score": 0.04, "ece": 0.02, "reliability_diagram": []}
-            elif "/feedback/vocabulary" in url:
-                resp.status_code = 200
-                resp.json.return_value = []
             else:
                 resp.status_code = 404
             return resp
@@ -235,32 +228,34 @@ def test_b3_repeated_switching_between_past_recordings():
 
         at = AppTest.from_file(SCRIPT_PATH)
         at.run()
-        at.radio[0].set_value("📂 Past Ingested Recordings").run()
+        # Nothing is opened until the user picks a recording
+        assert at.session_state.get("recording_id") is None
+        at.selectbox(key="past_recording_selector").set_value(rec_a).run()
 
-        # Step 1: Default selection is rec_a
+        # Step 1: rec_a opened
         assert at.session_state.get("recording_id") == rec_a
         assert at.session_state.get("filename") == "UK_Parliament.mp3"
         assert at.session_state.get("job_id") is None
-        label_b = "Piers_Debate.mp3 (190bbaef...) - 204.6s"
-        label_a = "UK_Parliament.mp3 (c381b3c1...) - 215.4s"
+        sel = at.selectbox(key="past_recording_selector")
+        assert sel.options == ["UK_Parliament.mp3 · 3:35 · c381b3c1", "Piers_Debate.mp3 · 3:25 · 190bbaef"]
 
         # Step 2: Switch to B
         sel = at.selectbox(key="past_recording_selector")
-        sel.select(label_b).run()
+        sel.set_value(rec_b).run()
         assert at.session_state.get("recording_id") == rec_b
         assert at.session_state.get("filename") == "Piers_Debate.mp3"
         assert at.session_state.get("job_id") is None
 
         # Step 3: Switch back to A
         sel = at.selectbox(key="past_recording_selector")
-        sel.select(label_a).run()
+        sel.set_value(rec_a).run()
         assert at.session_state.get("recording_id") == rec_a
         assert at.session_state.get("filename") == "UK_Parliament.mp3"
         assert at.session_state.get("job_id") is None
 
         # Step 4: Switch to B again
         sel = at.selectbox(key="past_recording_selector")
-        sel.select(label_b).run()
+        sel.set_value(rec_b).run()
         assert at.session_state.get("recording_id") == rec_b
         assert at.session_state.get("filename") == "Piers_Debate.mp3"
         assert at.session_state.get("job_id") is None
@@ -271,15 +266,15 @@ def test_b3_repeated_switching_between_past_recordings():
 
 
 # ---------------------------------------------------------------------------
-# Test B4: Switching Across All Three Workflow Modes
+# Test B4: Upload + Recent Recordings Layout
 # ---------------------------------------------------------------------------
-def test_b4_workflow_mode_switching_state_isolation():
-    """Scenario: Transition across Benchmark -> Upload -> Past Recordings -> Upload -> Benchmark.
-    
+def test_b4_upload_and_recent_layout_state():
+    """Scenario: Single page with an upload card and a Recent recordings list.
+
     Verifies:
-    - Mode changes clear stale recording_id, job_id, and filename.
-    - No active progress or stale transcript leaks into the Upload tab.
-    - Returning to Past Recordings synchronizes properly with past_recording_selector.
+    - Nothing is opened initially; the empty-state hint is shown.
+    - Picking a recent recording opens it without starting a job.
+    - The selection persists across reruns.
     """
     rec_a = "rec-historical-a"
     recordings_list = [
@@ -302,9 +297,6 @@ def test_b4_workflow_mode_switching_state_isolation():
             elif "/analytics" in url:
                 resp.status_code = 200
                 resp.json.return_value = {"brier_score": 0.05, "ece": 0.02, "reliability_diagram": []}
-            elif "/feedback/vocabulary" in url:
-                resp.status_code = 200
-                resp.json.return_value = []
             else:
                 resp.status_code = 404
             return resp
@@ -314,32 +306,24 @@ def test_b4_workflow_mode_switching_state_isolation():
         at = AppTest.from_file(SCRIPT_PATH)
         at.run()
 
-        # Mode 1: Benchmark Mode (default)
-        assert at.radio[0].value == "🎯 Select Benchmark Audio Recording"
+        # Initial state: upload card + recent list, nothing opened, no toggle
+        assert len(at.radio) == 0
         assert at.session_state.get("recording_id") is None
+        assert at.selectbox(key="past_recording_selector").value is None
+        assert any("Upload media above" in str(i.value) for i in at.info)
+        assert "Upload and transcribe" in [b.label for b in at.button]
 
-        # Mode 2: Switch to Past Ingested Recordings
-        at.radio[0].set_value("📂 Past Ingested Recordings").run()
+        # Open a recording from the Recent list
+        at.selectbox(key="past_recording_selector").set_value(rec_a).run()
         assert at.session_state.get("recording_id") == rec_a
         assert at.session_state.get("filename") == "sample_past.wav"
-
-        # Mode 3: Switch to Upload New Audio / Video
-        at.radio[0].set_value("📤 Upload New Audio / Video").run()
-        # Stale state must be cleared
-        assert at.session_state.get("recording_id") is None
         assert at.session_state.get("job_id") is None
-        assert at.session_state.get("filename") is None
-        # Verify prompt requesting media upload is present
-        assert any("upload media above" in str(i.value) for i in at.info)
+        assert len(at.exception) == 0
 
-        # Mode 4: Switch back to Past Ingested Recordings
-        at.radio[0].set_value("📂 Past Ingested Recordings").run()
+        # Re-running keeps the same recording open (no state leakage / reset)
+        at.run()
         assert at.session_state.get("recording_id") == rec_a
-
-        # Mode 5: Switch back to Benchmark Mode
-        at.radio[0].set_value("🎯 Select Benchmark Audio Recording").run()
-        assert at.session_state.get("recording_id") is None
-        assert at.session_state.get("job_id") is None
+        assert at.selectbox(key="past_recording_selector").value == rec_a
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +335,7 @@ def test_b5_ingested_recording_without_transcript_or_job():
     
     Verifies:
     - Displays 'Not transcribed yet' info notification.
-    - Provides 'Run Phase 20 Pipeline on this Recording' button.
+    - Provides 'Transcribe this recording' button.
     - Does not fabricate transcript content.
     - Does not mark the recording as 'failed'.
     - Does not loop or endlessly poll status.
@@ -379,7 +363,7 @@ def test_b5_ingested_recording_without_transcript_or_job():
 
         at = AppTest.from_file(SCRIPT_PATH)
         at.run()
-        at.radio[0].set_value("📂 Past Ingested Recordings").run()
+        at.selectbox(key="past_recording_selector").set_value(untranscribed_id).run()
 
         assert len(at.exception) == 0
 
@@ -387,9 +371,9 @@ def test_b5_ingested_recording_without_transcript_or_job():
         info_texts = [i.value for i in at.info]
         assert any("Not transcribed yet" in t for t in info_texts), f"Info banners: {info_texts}"
 
-        # Assert 'Run Phase 20 Pipeline on this Recording' button is rendered
+        # Assert 'Transcribe this recording' button is rendered
         btn_labels = [b.label for b in at.button]
-        assert "Run Phase 20 Pipeline on this Recording" in btn_labels
+        assert "Transcribe this recording" in btn_labels
 
         # Assert no failed error is displayed
         assert len(at.error) == 0
@@ -432,7 +416,7 @@ def test_b6_unexpected_api_failures_surfaced():
 
         at = AppTest.from_file(SCRIPT_PATH)
         at.run()
-        at.radio[0].set_value("📂 Past Ingested Recordings").run()
+        at.selectbox(key="past_recording_selector").set_value(err_rec_id).run()
 
         error_texts = [e.value for e in at.error]
         assert any("500 Internal Server Error" in t for t in error_texts), f"Expected 500 error, got: {error_texts}"
@@ -456,7 +440,7 @@ def test_b6_unexpected_api_failures_surfaced():
 
         at = AppTest.from_file(SCRIPT_PATH)
         at.run()
-        at.radio[0].set_value("📂 Past Ingested Recordings").run()
+        at.selectbox(key="past_recording_selector").set_value(err_rec_id).run()
 
         error_texts = [e.value for e in at.error]
         assert any("Connection refused by backend" in t for t in error_texts), f"Expected connection error, got: {error_texts}"

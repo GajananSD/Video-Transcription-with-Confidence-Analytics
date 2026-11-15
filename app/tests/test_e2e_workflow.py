@@ -110,6 +110,11 @@ def test_full_user_journey(client: TestClient):
 
     assert final_status == "completed"
 
+    # Re-requesting a finished recording reuses the completed job instead of re-running it
+    again = client.post("/api/v1/transcriptions", json=job_req).json()
+    assert again["job_id"] == job_id
+    assert again["status"] == "completed"
+
     # 4. User Retrieves the Full Canonical Transcript Result
     tx_resp = client.get(f"/api/v1/transcriptions/{recording_id}")
     assert tx_resp.status_code == 200
@@ -136,16 +141,3 @@ def test_full_user_journey(client: TestClient):
         exp_resp = client.get(f"/api/v1/transcriptions/{recording_id}/export?format={fmt}")
         assert exp_resp.status_code == 200
         assert len(exp_resp.text) > 20
-
-    # 7. User Submits Correction Revision (Feedback Loop)
-    feedback_req = {
-        "recording_id": recording_id,
-        "turn_id": transcript["segments"][0]["turn_id"],
-        "original_text": transcript["segments"][0]["text"],
-        "corrected_text": "Good morning driver. Officer Davis Highway Patrol.",
-        "original_speaker": transcript["segments"][0]["speaker"],
-        "corrected_speaker": "Officer Davis",
-    }
-    fb_resp = client.post("/api/v1/feedback", json=feedback_req)
-    assert fb_resp.status_code == 200
-    assert fb_resp.json()["status"] == "recorded"

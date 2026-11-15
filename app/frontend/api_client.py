@@ -28,12 +28,19 @@ class APIClient:
         return resp.json()
 
     def trigger_transcription(
-        self, recording_id: str, use_mock: bool = False, initial_prompt: Optional[str] = None
+        self,
+        recording_id: str,
+        use_mock: bool = False,
+        initial_prompt: Optional[str] = None,
+        force: bool = False,
+        use_learned_vocabulary: bool = True,
     ) -> dict[str, Any]:
         payload = {
             "recording_id": recording_id,
             "use_mock": use_mock,
             "initial_prompt": initial_prompt,
+            "force": force,
+            "use_learned_vocabulary": use_learned_vocabulary,
         }
         resp = requests.post(f"{self.base_url}/api/v1/transcriptions", json=payload, timeout=10)
         resp.raise_for_status()
@@ -60,31 +67,39 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    # ---------------------------------------------------------- adaptive feedback loop
     def submit_feedback(
         self,
         recording_id: str,
-        turn_id: Optional[str],
-        original_text: str,
+        turn_id: str,
         corrected_text: str,
-        original_speaker: Optional[str] = None,
         corrected_speaker: Optional[str] = None,
-        notes: Optional[str] = None,
+        original_text: str = "",
     ) -> dict[str, Any]:
         payload = {
             "recording_id": recording_id,
             "turn_id": turn_id,
             "original_text": original_text,
             "corrected_text": corrected_text,
-            "original_speaker": original_speaker,
             "corrected_speaker": corrected_speaker,
-            "notes": notes,
         }
-        resp = requests.post(f"{self.base_url}/api/v1/feedback", json=payload, timeout=10)
+        resp = requests.post(f"{self.base_url}/api/v1/feedback", json=payload, timeout=15)
         resp.raise_for_status()
         return resp.json()
 
-    def get_vocabulary(self) -> list[str]:
-        resp = requests.get(f"{self.base_url}/api/v1/feedback/vocabulary", timeout=5)
+    def list_feedback(self, recording_id: Optional[str] = None) -> list[dict[str, Any]]:
+        params = {"recording_id": recording_id} if recording_id else None
+        resp = requests.get(f"{self.base_url}/api/v1/feedback", params=params, timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+
+    def delete_feedback(self, feedback_id: str) -> dict[str, Any]:
+        resp = requests.delete(f"{self.base_url}/api/v1/feedback/{feedback_id}", timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_adaptive_status(self) -> dict[str, Any]:
+        resp = requests.get(f"{self.base_url}/api/v1/adaptive/status", timeout=5)
         resp.raise_for_status()
         return resp.json()
 

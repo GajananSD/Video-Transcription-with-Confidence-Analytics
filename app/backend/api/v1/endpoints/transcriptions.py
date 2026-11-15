@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import PlainTextResponse
 
+from backend.api.v1.responses import error
 from backend.database.models import RecordingRepository
 from backend.services.export_service import ExportService
 from backend.services.job_service import JobService
@@ -13,15 +14,32 @@ from engine.schemas import JobStatusResponse, TranscriptionJobRequest, Transcrip
 router = APIRouter()
 
 
-@router.post("/transcriptions", response_model=JobStatusResponse, status_code=202, tags=["Transcriptions"])
+@router.post(
+    "/transcriptions",
+    response_model=JobStatusResponse,
+    status_code=202,
+    tags=["Transcriptions"],
+    responses={
+        202: {
+            "description": "Job accepted. `status` is `queued` for a new job, `processing` if one is already "
+            "running, or `completed` if this recording was already transcribed (no work is repeated)."
+        },
+        404: error("Unknown recording_id", "Recording '<recording_id>' not found."),
+    },
+)
 def trigger_transcription(request: TranscriptionJobRequest) -> JobStatusResponse:
     """Dispatch an asynchronous speech transcription and diarization job."""
     record = RecordingRepository.get(request.recording_id)
     if not record:
         raise HTTPException(status_code=404, detail=f"Recording '{request.recording_id}' not found.")
 
-    # Create or retrieve active job
-    job = JobService.create_job(request.recording_id)
+    # Reuse a finished job when its transcript is still available; otherwise
+    # create a new job or retrieve the active (queued/processing) one.
+    job = JobService.get_job_by_recording(request.recording_id)
+    if request.force or not (
+        job and job.status == "completed" and TranscriptionService.get_transcript(request.recording_id)
+    ):
+        job = JobService.create_job(request.recording_id)
 
     # If job is already processing or finished, return its status
     if job.status in ("completed", "processing"):
@@ -43,6 +61,7 @@ def trigger_transcription(request: TranscriptionJobRequest) -> JobStatusResponse
             progress_cb=progress_cb,
             use_mock=request.use_mock,
             initial_prompt=request.initial_prompt,
+            use_learned_vocabulary=request.use_learned_vocabulary,
         )
 
     JobService.submit_task(job.job_id, _run_task)
@@ -59,7 +78,12 @@ def trigger_transcription(request: TranscriptionJobRequest) -> JobStatusResponse
     )
 
 
-@router.get("/transcriptions/{job_or_rec_id}/status", response_model=JobStatusResponse, tags=["Transcriptions"])
+@router.get(
+    "/transcriptions/{job_or_rec_id}/status",
+    response_model=JobStatusResponse,
+    tags=["Transcriptions"],
+    responses={404: error("No job for this job_id or recording_id", "Job not found for ID '<id>'.")},
+)
 def get_job_status(job_or_rec_id: str) -> JobStatusResponse:
     """Retrieve progress and execution status of a processing job."""
     job = JobService.get_job(job_or_rec_id)
@@ -80,7 +104,19 @@ def get_job_status(job_or_rec_id: str) -> JobStatusResponse:
     )
 
 
-@router.get("/transcriptions/{recording_id}", response_model=TranscriptResult, tags=["Transcriptions"])
+@router.get(
+    "/transcriptions/{recording_id}",
+    response_model=TranscriptResult,
+    tags=["Transcriptions"],
+    responses={
+        202: error(
+            "Transcription still queued or processing; poll `/status` and retry",
+            "Processing in progress (stage: Preprocessing audio, 10%).",
+        ),
+        404: error("No transcript and no job for this recording", "No transcript found for recording '<recording_id>'."),
+        500: error("The transcription job failed", "Job failed: <error>"),
+    },
+)
 def get_transcript(recording_id: str) -> TranscriptResult:
     """Retrieve the canonical transcript, speaker attribution, and confidence analytics."""
     transcript = TranscriptionService.get_transcript(recording_id)
@@ -96,7 +132,29 @@ def get_transcript(recording_id: str) -> TranscriptResult:
     return transcript
 
 
-@router.get("/transcriptions/{recording_id}/export", tags=["Transcriptions"])
+@router.get(
+    "/transcriptions/{recording_id}/export",
+    tags=["Transcriptions"],
+    response_class=Response,
+    responses={
+        200: {
+            "description": "Transcript file. Content type depends on `format`: "
+            "`txt` and `srt` → text/plain, `vtt` → text/vtt, `json` → application/json (a TranscriptResult).",
+            "content": {
+                "text/plain": {
+                    "schema": {"type": "string"},
+                    "example": "1\n00:00:06,971 --> 00:00:11,529\n[SPEAKER_01] So if you could tell us a little bit about it.\n",
+                },
+                "text/vtt": {
+                    "schema": {"type": "string"},
+                    "example": "WEBVTT\n\n1\n00:00:06.971 --> 00:00:11.529\n<v SPEAKER_01>So if you could tell us a little bit about it.\n",
+                },
+                "application/json": {"schema": {"$ref": "#/components/schemas/TranscriptResult"}},
+            },
+        },
+        404: error("No transcript for this recording", "Transcript not found."),
+    },
+)
 def export_transcript(
     recording_id: str,
     format: str = Query(default="txt", pattern="^(txt|json|srt|vtt)$"),

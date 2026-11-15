@@ -138,8 +138,10 @@ class Settings(BaseModel):
     whisper_model: str = Field(default_factory=lambda: os.getenv("WHISPER_MODEL", "large-v3"))
     confidence_threshold: float = Field(default_factory=lambda: float(os.getenv("CONFIDENCE_THRESHOLD", "0.70")))
     calibration_method: str = Field(default_factory=lambda: os.getenv("CALIBRATION_METHOD", "isotonic_regression"))
-    device: str = Field(default_factory=lambda: os.getenv("DEVICE", "cpu"))
-    compute_type: str = Field(default_factory=lambda: os.getenv("COMPUTE_TYPE", "int8"))
+    # "auto" = use the GPU (CUDA) if available, otherwise CPU. Can be forced to "cuda" or "cpu".
+    device: str = Field(default_factory=lambda: os.getenv("DEVICE", "auto"))
+    # "auto" = pick precision for the chosen device (float16/int8 on GPU, int8 on CPU).
+    compute_type: str = Field(default_factory=lambda: os.getenv("COMPUTE_TYPE", "auto"))
     hf_token: Optional[str] = Field(default_factory=resolve_hf_token)
     mock_inference: bool = Field(default=False)
 

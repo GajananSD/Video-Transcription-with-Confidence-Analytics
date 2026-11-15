@@ -23,10 +23,10 @@ def render_confidence_scatter(words_df: pd.DataFrame, color_scale: alt.Scale, sh
             shape=alt.Shape("Confidence level:N", scale=shape_scale),
             tooltip=["word", "start", "end", "confidence", "speaker", "Confidence level"],
         )
-        .properties(height=320)
+        .properties(height=300)
         .interactive()
     )
-    st.altair_chart(scatter, use_container_width=True)
+    st.altair_chart(scatter, width="stretch")
 
 
 def render_confidence_histogram(words_df: pd.DataFrame, color_scale: alt.Scale) -> None:
@@ -44,9 +44,9 @@ def render_confidence_histogram(words_df: pd.DataFrame, color_scale: alt.Scale) 
             color=alt.Color("Confidence level:N", scale=color_scale, legend=alt.Legend(title="Level")),
             tooltip=["count()"],
         )
-        .properties(height=280)
+        .properties(height=240)
     )
-    st.altair_chart(hist, use_container_width=True)
+    st.altair_chart(hist, width="stretch")
 
 
 def render_speech_timeline(segs_df: pd.DataFrame, high_color: str) -> None:
@@ -57,7 +57,7 @@ def render_speech_timeline(segs_df: pd.DataFrame, high_color: str) -> None:
 
     timeline = (
         alt.Chart(segs_df)
-        .mark_bar(color=high_color, stroke="black", strokeWidth=1)
+        .mark_bar(color=high_color, cornerRadiusEnd=3)
         .encode(
             x=alt.X("start:Q", title="Time (seconds)"),
             x2="end:Q",
@@ -66,7 +66,7 @@ def render_speech_timeline(segs_df: pd.DataFrame, high_color: str) -> None:
         )
         .properties(height=max(120, 32 * len(segs_df) + 30))
     )
-    st.altair_chart(timeline, use_container_width=True)
+    st.altair_chart(timeline, width="stretch")
 
 
 def render_segment_confidence_bar(segs_df: pd.DataFrame, high_color: str) -> None:
@@ -76,15 +76,15 @@ def render_segment_confidence_bar(segs_df: pd.DataFrame, high_color: str) -> Non
 
     bar = (
         alt.Chart(segs_df)
-        .mark_bar(color=high_color, stroke="black", strokeWidth=1)
+        .mark_bar(color=high_color, cornerRadiusEnd=3)
         .encode(
             x=alt.X("segment:N", sort=None, title=None, axis=alt.Axis(labelAngle=-30)),
             y=alt.Y("avg_confidence:Q", title="Average confidence", scale=alt.Scale(domain=[0, 1])),
             tooltip=["segment", "speaker", alt.Tooltip("avg_confidence:Q", format=".2f")],
         )
-        .properties(height=280)
+        .properties(height=240)
     )
-    st.altair_chart(bar, use_container_width=True)
+    st.altair_chart(bar, width="stretch")
 
 
 def render_reliability_diagram(diagram_data: list[dict[str, Any]]) -> None:
@@ -113,5 +113,5 @@ def render_reliability_diagram(diagram_data: list[dict[str, Any]]) -> None:
         )
     )
 
-    combined = (bars + line).properties(height=300)
-    st.altair_chart(combined, use_container_width=True)
+    combined = (bars + line).properties(height=240)
+    st.altair_chart(combined, width="stretch")

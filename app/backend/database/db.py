@@ -1,10 +1,15 @@
 """SQLite Database Connection and Schema Management."""
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parents[2] / "storage" / "app.db"
+# APP_DB_PATH lets tests (or deployments) use an isolated database file.
+DB_PATH = Path(
+    os.getenv("APP_DB_PATH")
+    or Path(__file__).resolve().parents[2] / "storage" / "app.db"
+)
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -63,6 +68,22 @@ def init_db() -> None:
                 FOREIGN KEY (recording_id) REFERENCES recordings (recording_id)
             );
 
+            -- One row per original word in a user-reviewed turn: the label says whether the
+            -- user kept the word (1) or had to change it (0). Used to re-fit calibration.
+            CREATE TABLE IF NOT EXISTS calibration_samples (
+                sample_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                feedback_id TEXT NOT NULL,
+                recording_id TEXT NOT NULL,
+                word TEXT,
+                raw_confidence REAL NOT NULL,
+                calibrated_confidence REAL,
+                label INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (feedback_id) REFERENCES feedback (feedback_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_samples_feedback ON calibration_samples(feedback_id);
+            CREATE INDEX IF NOT EXISTS idx_feedback_recording ON feedback(recording_id);
             CREATE INDEX IF NOT EXISTS idx_recordings_sha256 ON recordings(sha256);
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
         """)

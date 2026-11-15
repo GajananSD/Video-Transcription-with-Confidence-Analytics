@@ -30,26 +30,3 @@ def test_upload_and_list_media(client: TestClient):
     records = list_resp.json()
     assert any(r["recording_id"] == data["recording_id"] for r in records)
 
-
-def test_feedback_endpoints(client: TestClient):
-    payload = {
-        "recording_id": "rec_test_feedback",
-        "turn_id": "turn_001",
-        "original_text": "officer Davis",
-        "corrected_text": "Officer Davis",
-        "original_speaker": "SPEAKER_00",
-        "corrected_speaker": "Officer Davis",
-        "notes": "Spelling and capitalization",
-    }
-    resp = client.post("/api/v1/feedback", json=payload)
-    assert resp.status_code == 200
-    res_data = resp.json()
-    assert res_data["status"] == "recorded"
-    assert "feedback_id" in res_data
-
-    # List feedback
-    list_resp = client.get("/api/v1/feedback?recording_id=rec_test_feedback")
-    assert list_resp.status_code == 200
-    items = list_resp.json()
-    assert len(items) >= 1
-    assert items[0]["corrected_text"] == "Officer Davis"

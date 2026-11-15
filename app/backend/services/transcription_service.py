@@ -53,6 +53,7 @@ class TranscriptionService:
         progress_cb: Optional[Callable[[float, str], None]] = None,
         use_mock: bool = False,
         initial_prompt: Optional[str] = None,
+        use_learned_vocabulary: bool = True,
     ) -> TranscriptResult:
         """Run real Phase 20 pipeline, apply calibration, and persist canonical result."""
         record = RecordingRepository.get(recording_id)
@@ -64,7 +65,15 @@ class TranscriptionService:
             progress_cb(0.1, "Preprocessing audio")
         norm_audio_path = AudioService.prepare_16k_mono_audio(recording_id)
 
-        # Step 2: Speech Engine Execution
+        # Step 2: Adaptive inputs learned from past user corrections
+        from .feedback_service import FeedbackService
+
+        FeedbackService.ensure_loaded()  # fits the calibrator from stored corrections
+        learned_terms = FeedbackService.get_manager().get_vocabulary()
+        if use_learned_vocabulary:
+            initial_prompt = FeedbackService.get_manager().get_whisper_prompt(base_prompt=initial_prompt) or None
+
+        # Step 3: Speech Engine Execution
         engine = cls.get_engine()
         options = {"initial_prompt": initial_prompt} if initial_prompt else {}
         
@@ -77,7 +86,7 @@ class TranscriptionService:
             options=options,
         )
 
-        # Step 3: Confidence Calibration Post-Processing
+        # Step 4: Confidence Calibration Post-Processing
         calibrator = cls.get_calibrator()
         for word in result.words:
             if not word.is_calibrated:
@@ -89,7 +98,15 @@ class TranscriptionService:
             if turn.words:
                 turn.avg_confidence = round(sum(w.confidence for w in turn.words) / len(turn.words), 3)
 
-        # Step 4: Storage Persistence
+        # Record which adaptive state produced this transcript
+        result.summary["adaptive"] = {
+            "initial_prompt": initial_prompt,
+            "learned_terms_used": learned_terms[:30] if use_learned_vocabulary else [],
+            "calibration_version": calibrator.version,
+            "calibration_samples": calibrator.n_samples,
+        }
+
+        # Step 5: Storage Persistence
         now_iso = datetime.now(timezone.utc).isoformat()
         result_dict = result.model_dump()
         

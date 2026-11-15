@@ -21,8 +21,20 @@ dependencies = [
     "soundfile>=0.12.0",
     "requests>=2.31.0",
     "python-multipart>=0.0.9",
-    "pyyaml>=6.0.0"
+    "pyyaml>=6.0.0",
+    "python-dotenv>=1.0.0",
+    "huggingface_hub>=0.24.0",
+    # Speech engine (imported directly by engine/phase20_engine.py and engine/wav2vec2_aligner.py)
+    "torch>=2.2.0",
+    "torchaudio>=2.2.0",
+    "faster-whisper>=1.0.0",
+    # Pyannote diarization fallback (used when the NeMo env is unavailable; needs HF_TOKEN)
+    "pyannote.audio>=3.1.0"
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["engine*", "backend*", "adaptive*", "frontend*"]
 
 [project.optional-dependencies]
 dev = [

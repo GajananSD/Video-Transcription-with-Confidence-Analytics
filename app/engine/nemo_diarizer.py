@@ -17,11 +17,42 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("engine.nemo_diarizer")
 
-DEFAULT_NEMO_PYTHON = Path("/home/priyanka/anaconda3/envs/cs698b_nemo/bin/python")
-DEFAULT_CHECKPOINT = Path(
-    "/home/priyanka/.cache/torch/NeMo/NeMo_2.7.3/diar_msdd_telephonic/3c3697a0a46f945574fa407149975a13/diar_msdd_telephonic.nemo"
-)
 WORKER_SCRIPT = Path(__file__).resolve().parent / "diarization_worker.py"
+
+
+def resolve_default_nemo_python() -> Path:
+    """Locate the Python interpreter of the (isolated) NeMo environment.
+
+    Priority: ``NEMO_PYTHON`` env var, then a conda env named ``cs698b_nemo``
+    under common install roots. Returns a non-existent placeholder path when
+    nothing is found so that ``is_available()`` reports a clear reason.
+    """
+    env_val = os.getenv("NEMO_PYTHON")
+    if env_val:
+        return Path(env_val).expanduser()
+    home = Path.home()
+    for root in ("anaconda3", "miniconda3", "miniforge3", "mambaforge", ".conda"):
+        candidate = home / root / "envs" / "cs698b_nemo" / "bin" / "python"
+        if candidate.exists():
+            return candidate
+    return home / "anaconda3" / "envs" / "cs698b_nemo" / "bin" / "python"
+
+
+def resolve_default_checkpoint() -> Path:
+    """Locate the diar_msdd_telephonic.nemo checkpoint.
+
+    Priority: ``NEMO_MSDD_CHECKPOINT`` env var, then the standard NeMo cache
+    (``~/.cache/torch/NeMo/<version>/diar_msdd_telephonic/<hash>/``).
+    """
+    env_val = os.getenv("NEMO_MSDD_CHECKPOINT")
+    if env_val:
+        return Path(env_val).expanduser()
+    cache_root = Path.home() / ".cache" / "torch" / "NeMo"
+    if cache_root.is_dir():
+        matches = sorted(cache_root.glob("*/diar_msdd_telephonic/*/diar_msdd_telephonic.nemo"))
+        if matches:
+            return matches[-1]
+    return cache_root / "diar_msdd_telephonic.nemo"
 
 
 class NemoMsddDiarizer:
@@ -35,8 +66,8 @@ class NemoMsddDiarizer:
         max_speakers: int = 10,
         device: str = "cuda",
     ) -> None:
-        self.nemo_python = nemo_python or DEFAULT_NEMO_PYTHON
-        self.checkpoint_path = checkpoint_path or DEFAULT_CHECKPOINT
+        self.nemo_python = nemo_python or resolve_default_nemo_python()
+        self.checkpoint_path = checkpoint_path or resolve_default_checkpoint()
         self.timeout_seconds = timeout_seconds
         self.max_speakers = max_speakers
         self.device = device

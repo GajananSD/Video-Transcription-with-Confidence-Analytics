@@ -85,6 +85,10 @@ class TranscriptionJobRequest(BaseModel):
     enable_denoising: bool = Field(default=False, description="Enable speech enhancement")
     language: str = Field(default="en", description="Spoken language code")
     initial_prompt: Optional[str] = Field(default=None, description="Domain vocabulary prompt")
+    use_learned_vocabulary: bool = Field(
+        default=True, description="Prepend vocabulary learned from user corrections to the Whisper prompt"
+    )
+    force: bool = Field(default=False, description="Re-run even if a transcript already exists")
 
 
 class JobStatusResponse(BaseModel):
@@ -115,3 +119,10 @@ class FeedbackResponse(BaseModel):
     status: str
     message: str
     feedback_id: str
+    error_type: Optional[str] = None
+    extracted_terms: list[str] = Field(default_factory=list)
+    words_changed: int = 0
+    words_total: int = 0
+    samples_added: int = 0
+    vocabulary_size: int = 0
+    calibration: dict[str, Any] = Field(default_factory=dict)

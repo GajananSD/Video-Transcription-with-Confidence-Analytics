@@ -15,14 +15,104 @@ class ConfidenceCalibrator:
     - Evaluation: Brier Score, Expected Calibration Error (ECE), and Reliability Diagrams.
     """
 
+    # Prior isotonic curve used until enough user-labelled words have been collected.
+    PRIOR_X = np.array([0.0, 0.20, 0.35, 0.50, 0.65, 0.80, 0.90, 1.0])
+    PRIOR_Y = np.array([0.05, 0.15, 0.30, 0.52, 0.72, 0.85, 0.94, 0.99])
+    # The prior counts as this many "virtual" labelled words when blending with learned data.
+    PRIOR_STRENGTH = 50
+    MIN_FIT_SAMPLES = 20
+    GRID = np.round(np.linspace(0.0, 1.0, 21), 2)
+
     def __init__(self, method: str = "isotonic_regression", temperature: float = 1.25):
         self.method = method
         self.temperature = max(0.1, temperature)
         self.ece: float = 0.042
         self.brier_score: float = 0.088
-        # Empirical monotonic calibration thresholds for default isotonic mapping
-        self._iso_x = np.array([0.0, 0.20, 0.35, 0.50, 0.65, 0.80, 0.90, 1.0])
-        self._iso_y = np.array([0.05, 0.15, 0.30, 0.52, 0.72, 0.85, 0.94, 0.99])
+        self.n_samples: int = 0
+        self.is_fitted: bool = False
+        self.version: str = "prior"
+        self.fit_report: dict[str, Any] = {}
+        self._iso_x = self.PRIOR_X.copy()
+        self._iso_y = self.PRIOR_Y.copy()
+
+    # ------------------------------------------------------------------ adaptive fitting
+    @staticmethod
+    def _pav(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Pool-Adjacent-Violators: least-squares non-decreasing fit of y on sorted x.
+
+        Returns knot positions (mean x of each pooled block) and block values.
+        """
+        order = np.argsort(x, kind="mergesort")
+        xs, ys = x[order], y[order]
+        blocks: list[list[float]] = []  # [sum_y, sum_x, count]
+        for xi, yi in zip(xs, ys):
+            blocks.append([float(yi), float(xi), 1.0])
+            while len(blocks) > 1 and blocks[-2][0] / blocks[-2][2] > blocks[-1][0] / blocks[-1][2]:
+                sy, sx, c = blocks.pop()
+                blocks[-1][0] += sy
+                blocks[-1][1] += sx
+                blocks[-1][2] += c
+        knots_x = np.array([b[1] / b[2] for b in blocks])
+        knots_y = np.array([b[0] / b[2] for b in blocks])
+        return knots_x, knots_y
+
+    def prior_score(self, raw_score: float) -> float:
+        return float(np.interp(min(max(raw_score, 0.0), 1.0), self.PRIOR_X, self.PRIOR_Y))
+
+    def reset(self) -> None:
+        """Return to the prior (unfitted) curve."""
+        self.__init__(method=self.method, temperature=self.temperature)
+
+    def fit(self, raw_scores: Sequence[float], labels: Sequence[int]) -> dict[str, Any]:
+        """Re-fit the isotonic curve from (raw_confidence, was_word_correct) pairs.
+
+        The learned isotonic curve is blended with the prior curve, weighted by how much
+        data is available: ``w = n / (n + PRIOR_STRENGTH)``. With few corrections the prior
+        dominates; as users correct more words the curve follows their data.
+        """
+        raw = np.clip(np.asarray(raw_scores, dtype=float), 0.0, 1.0)
+        lab = np.asarray(labels, dtype=float)
+        n = int(len(raw))
+        if n != len(lab) or n < self.MIN_FIT_SAMPLES or len(np.unique(lab)) < 2:
+            self.reset()
+            self.n_samples = n
+            self.fit_report = {"fitted": False, "n_samples": n, "min_samples": self.MIN_FIT_SAMPLES}
+            return self.fit_report
+
+        knots_x, knots_y = self._pav(raw, lab)
+        learned = np.interp(self.GRID, knots_x, knots_y)
+        prior = np.interp(self.GRID, self.PRIOR_X, self.PRIOR_Y)
+        weight = n / (n + self.PRIOR_STRENGTH)
+        blended = np.clip(weight * learned + (1.0 - weight) * prior, 0.0, 1.0)
+        blended = np.maximum.accumulate(blended)  # guard monotonicity against float noise
+
+        prior_conf = [self.prior_score(r) for r in raw]
+        self._iso_x, self._iso_y = self.GRID.copy(), blended
+        self.method = "isotonic_regression"
+        self.is_fitted = True
+        self.n_samples = n
+        self.version = f"learned-n{n}"
+        new_conf = [self.calibrate_score(r) for r in raw]
+        self.ece = self.compute_ece(new_conf, lab.tolist())
+        self.brier_score = self.compute_brier_score(new_conf, lab.tolist())
+        self.fit_report = {
+            "fitted": True,
+            "n_samples": n,
+            "data_weight": round(weight, 3),
+            "observed_accuracy": round(float(lab.mean()), 3),
+            "ece_prior": round(self.compute_ece(prior_conf, lab.tolist()), 4),
+            "ece_learned": round(self.ece, 4),
+            "brier_prior": round(self.compute_brier_score(prior_conf, lab.tolist()), 4),
+            "brier_learned": round(self.brier_score, 4),
+        }
+        return self.fit_report
+
+    def curve(self) -> list[dict[str, float]]:
+        """Prior vs current calibration mapping on a fixed grid (for plotting)."""
+        return [
+            {"raw": float(x), "prior": round(self.prior_score(x), 3), "current": round(self.calibrate_score(x), 3)}
+            for x in self.GRID
+        ]
 
     def calibrate(self, raw_score: float) -> float:
         """Alias for calibrate_score."""

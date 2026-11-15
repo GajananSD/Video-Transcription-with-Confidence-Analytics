@@ -1,0 +1,13 @@
+# Requirements for the standalone app (app/).
+#
+# The dependency list lives in pyproject.toml (single source of truth), so
+# `pip install -r requirements.txt` and `pip install -e ".[dev]"` install the same set.
+#
+# CPU-only machines: install the CPU torch build first to avoid the large CUDA wheels:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#
+# System requirement (not pip-installable): ffmpeg must be on PATH.
+#
+# NeMo MSDD diarization runs in a separate Python env (see README); point to it with
+# NEMO_PYTHON and NEMO_MSDD_CHECKPOINT in app/.env.
+-e .[dev]
