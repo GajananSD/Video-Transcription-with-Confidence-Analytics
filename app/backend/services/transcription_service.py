@@ -118,6 +118,15 @@ class TranscriptionService:
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(result_dict, f, indent=2)
 
+        # Step 6: Send the finished transcript to registered plugins (other teams' services).
+        # Done inside the job, so their results are ready when the transcript is shown.
+        from backend.extensions import ExtensionRepository, notify_plugins
+
+        if ExtensionRepository.list_all(enabled_only=True):
+            if progress_cb:
+                progress_cb(0.97, "Sending transcript to plugins")
+            notify_plugins(recording_id)
+
         return result
 
     @classmethod

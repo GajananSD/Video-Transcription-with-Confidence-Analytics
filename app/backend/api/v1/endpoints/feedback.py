@@ -1,11 +1,13 @@
 """User Corrections and Adaptive Learning Endpoints."""
 from __future__ import annotations
 
+import threading
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.api.v1.responses import error
+from backend.extensions import notify_plugins
 from backend.services.feedback_service import FeedbackError, FeedbackService
 from engine.schemas import FeedbackResponse, UserFeedbackItem
 
@@ -30,6 +32,9 @@ def submit_feedback(feedback: UserFeedbackItem) -> FeedbackResponse:
         result = FeedbackService.record_feedback(feedback)
     except FeedbackError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # The transcript changed: tell plugins (transcript.updated) in the background,
+    # so a slow plugin never delays saving the correction.
+    threading.Thread(target=notify_plugins, args=(feedback.recording_id,), daemon=True).start()
     return FeedbackResponse(
         status="recorded",
         message="Correction recorded; vocabulary and calibration updated.",

@@ -82,9 +82,48 @@ def init_db() -> None:
                 FOREIGN KEY (feedback_id) REFERENCES feedback (feedback_id)
             );
 
+            -- Extensions: external services (e.g. another team's) that receive transcript
+            -- events and answer with an insight card shown under the transcript.
+            CREATE TABLE IF NOT EXISTS extensions (
+                extension_id TEXT PRIMARY KEY,
+                team TEXT NOT NULL DEFAULT '',   -- team that owns the plugin
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                events TEXT NOT NULL,            -- JSON list of subscribed event names
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
+            );
+
+            -- Latest answer of each extension for each recording. `fingerprint` identifies
+            -- the transcript version it was computed from, so edits make it stale.
+            CREATE TABLE IF NOT EXISTS extension_runs (
+                extension_id TEXT NOT NULL,
+                recording_id TEXT NOT NULL,
+                event TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                ok INTEGER NOT NULL,
+                card_json TEXT,
+                error TEXT,
+                raw_json TEXT,                   -- exactly what the plugin answered
+                elapsed_ms INTEGER,
+                ran_at TEXT NOT NULL,
+                PRIMARY KEY (extension_id, recording_id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_samples_feedback ON calibration_samples(feedback_id);
             CREATE INDEX IF NOT EXISTS idx_feedback_recording ON feedback(recording_id);
             CREATE INDEX IF NOT EXISTS idx_recordings_sha256 ON recordings(sha256);
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
         """)
+        # Columns added after the first release: add them to older databases.
+        for table, column, ddl in _ADDED_COLUMNS:
+            existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
     conn.close()
+
+
+_ADDED_COLUMNS = [
+    ("extensions", "team", "TEXT NOT NULL DEFAULT ''"),
+    ("extension_runs", "raw_json", "TEXT"),
+]

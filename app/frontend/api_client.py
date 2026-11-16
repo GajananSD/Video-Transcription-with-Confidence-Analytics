@@ -103,6 +103,54 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    # ---------------------------------------------------------- extensions
+    def list_extensions(self) -> list[dict[str, Any]]:
+        resp = requests.get(f"{self.base_url}/api/v1/extensions", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+
+    def register_extension(self, name: str, url: str, events: list[str], team: str = "") -> dict[str, Any]:
+        resp = requests.post(
+            f"{self.base_url}/api/v1/extensions",
+            json={"team": team, "name": name, "url": url, "events": events},
+            timeout=5,
+        )
+        if resp.status_code == 422:
+            detail = resp.json().get("detail", [{}])
+            raise ValueError(detail[0].get("msg", "Invalid input") if isinstance(detail, list) else str(detail))
+        resp.raise_for_status()
+        return resp.json()
+
+    def update_extension(self, extension_id: str, **fields: Any) -> dict[str, Any]:
+        resp = requests.patch(f"{self.base_url}/api/v1/extensions/{extension_id}", json=fields, timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+
+    def delete_extension(self, extension_id: str) -> dict[str, Any]:
+        resp = requests.delete(f"{self.base_url}/api/v1/extensions/{extension_id}", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+
+    def test_extension(self, extension_id: str, recording_id: Optional[str] = None) -> dict[str, Any]:
+        params = {"recording_id": recording_id} if recording_id else None
+        resp = requests.post(f"{self.base_url}/api/v1/extensions/{extension_id}/test", params=params, timeout=20)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_extension_contract(self) -> dict[str, Any]:
+        resp = requests.get(f"{self.base_url}/api/v1/extensions/contract", timeout=5)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_insights(self, recording_id: str, refresh: bool = False) -> list[dict[str, Any]]:
+        resp = requests.get(
+            f"{self.base_url}/api/v1/extensions/insights/{recording_id}",
+            params={"refresh": "true"} if refresh else None,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def get_export_url(self, recording_id: str, format_str: str) -> str:
         return f"{self.base_url}/api/v1/transcriptions/{recording_id}/export?format={format_str}"
 

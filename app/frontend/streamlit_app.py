@@ -17,6 +17,7 @@ from frontend.components.charts import (
     render_segment_confidence_bar,
     render_speech_timeline,
 )
+from frontend.components.extensions import render_plugin_manager, render_plugin_results
 from frontend.components.learning import render_correction_form, render_learning_panel
 from frontend.components.styles import inject_styles
 from frontend.components.tables import render_accessible_tables
@@ -144,6 +145,17 @@ st.markdown(
     "word-level confidence.</p></div>",
     unsafe_allow_html=True,
 )
+
+# Top-level sections: transcription (default) and plugin registration (always available).
+SECTION_TRANSCRIBE, SECTION_PLUGINS = "🎬 Transcribe", "🧩 Plugins"
+section = st.segmented_control(
+    "Section", [SECTION_TRANSCRIBE, SECTION_PLUGINS], default=SECTION_TRANSCRIBE,
+    key="main_section", label_visibility="collapsed",
+) or SECTION_TRANSCRIBE
+
+if section == SECTION_PLUGINS:
+    render_plugin_manager(client, st.session_state.get("recording_id"), colors)
+    st.stop()
 
 col_upload, col_recent = st.columns([3, 2], gap="medium")
 
@@ -358,8 +370,8 @@ c4.metric("Low-Confidence Words", f"{n_low} ({n_low / max(1, n_words):.0%})", bo
 c5.metric("Speakers", speakers_count or "—", border=True)
 
 # ---------------------------------------------------------------- Tabs
-tab_tx, tab_charts, tab_learn, tab_data, tab_export = st.tabs(
-    ["📝 Transcript", "📊 Analytics", "🧠 Learning", "📋 Data", "💾 Export"]
+tab_tx, tab_charts, tab_learn, tab_data, tab_export, tab_plugins = st.tabs(
+    ["📝 Transcript", "📊 Analytics", "🧠 Learning", "📋 Data", "💾 Export", "🧩 Plugin results"]
 )
 
 with tab_tx:
@@ -454,3 +466,12 @@ with tab_export:
                 )
             except Exception:
                 st.button("Unavailable", key=f"dl_{fmt}_disabled", disabled=True, width="stretch")
+
+with tab_plugins:
+    render_plugin_results(
+        client,
+        current_recording_id,
+        colors,
+        _num_speaker,
+        is_greyscale=palette_name.startswith("Greyscale"),
+    )

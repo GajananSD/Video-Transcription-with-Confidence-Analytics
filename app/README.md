@@ -329,9 +329,36 @@ The page has two cards at the top: **New transcription** (upload) and **Recent r
    - **🧠 Learning:** what the system has learned: the vocabulary, the hint sent to Whisper on the next job, the starting vs learned calibration curve, and the corrections made to this recording. Click **Re-transcribe this recording with what was learned** to run the pipeline again with that vocabulary and calibration (this replaces your earlier manual edits to the recording).
    - **📋 Data:** sortable tables of turns and words, with CSV download.
    - **💾 Export:** download as JSON, plain text, SRT or WebVTT.
+   - **🧩 Plugin results:** what each registered plugin (another team's service) sent back for this recording. See [Plugins](#plugins).
 4. **Recent recordings:** pick any earlier recording from the list to reopen its result instantly. A recording that was uploaded but never processed shows a **Transcribe this recording** button.
 
 Calibration starts re-fitting once about 20 words have been reviewed. The sidebar controls the colour scheme, text size and confidence thresholds.
+
+### Plugins
+
+A plugin is **another team's web service**, usually running on their laptop. It receives each finished transcript and answers with an **insight card**.
+
+The switch at the top of the page has two sections: **🎬 Transcribe** and **🧩 Plugins**.
+
+1. **Register:** open **🧩 Plugins**. You don't need to open a recording first. Enter the **team name**, the **plugin name** and the **plugin URL** (e.g. `http://<their-laptop-ip>:8300/insight`), then click **Register plugin**. Click **Send test** to check that the app can reach it.
+2. **Transcribe** a video as usual. When the transcript is ready, the processing job sends it to every active plugin (`transcript.ready`) before it finishes ("Sending transcript to plugins" in the progress bar). A slow or broken plugin never makes the transcription fail.
+3. **Open the recording's 🧩 Plugin results tab.** It shows one box per plugin with the team, plugin name, URL, time and status (● received / ▲ failed), the card it sent, and the **raw response received**. **↻ Send again** sends the transcript again.
+4. **Correct a turn** in the Transcript tab, and the new version is sent to plugins in the background (`transcript.updated`).
+
+Recordings transcribed before a plugin was registered are sent to it the first time you open their Plugin results tab.
+
+Cards are validated and drawn by the dashboard itself. Plugins cannot send HTML, Markdown or colours. Flag levels reuse the confidence tiers (attention ▲, info ■, good ●), so every card follows the selected colourblind-safe scheme, and colour is never the only cue. Each chart also has a table version.
+
+The full contract (an example event and an example card) is at `GET /api/v1/extensions/contract`. It is also shown in the Plugins section under "For plugin authors".
+
+**Try it with the bundled example plugin** ("Talk balance"):
+
+```bash
+# from app/, in a third terminal
+uvicorn extensions_examples.talk_balance:app --port 8300
+```
+
+Then register `http://127.0.0.1:8300/insight` in **🧩 Plugins** and click **Send test**. A fuller, standalone plugin that can run on another laptop is in `../video_transcription_plugin` (next to this project in Downloads).
 
 ---
 
