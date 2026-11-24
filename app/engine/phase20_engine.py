@@ -482,8 +482,13 @@ class Phase20SpeechEngine(BaseSpeechEngine):
             duration,
         )
 
+        # Pass the preloaded 16 kHz waveform rather than the path: given a path,
+        # faster-whisper decodes via PyAV with `metadata_errors=`, which PyAV >= 16
+        # no longer accepts (TypeError). Fall back to the path only if loading failed.
+        asr_input = waveform if (waveform is not None and sr == 16000) else str(audio_path)
+
         segments_iter, info = model.transcribe(
-            str(audio_path),
+            asr_input,
             language=language,
             task="transcribe",
             beam_size=5,
