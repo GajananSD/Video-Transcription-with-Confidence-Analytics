@@ -41,6 +41,44 @@ def _mmss(seconds: float) -> str:
     return f"{s // 60}:{s % 60:02d}"
 
 
+# Errors that mean "the plugin's machine could not be reached" (see backend runner.call_extension).
+_UNREACHABLE_HINTS = ("could not connect", "no answer within", "could not reach")
+
+# A cable pulled out of its socket, with a spark: the fallback picture for a lost connection.
+# Drawn with currentColor / var(--low) so it follows the sidebar colour scheme and dark mode.
+_UNPLUGGED_SVG = """
+<svg class="xi-offline-art" viewBox="0 0 120 64" role="img" aria-label="Plug disconnected from its socket">
+  <path d="M4 32 H30" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" opacity=".55"/>
+  <rect x="30" y="20" width="20" height="24" rx="4" fill="none" stroke="currentColor" stroke-width="3"/>
+  <path d="M50 26 H58 M50 38 H58" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+  <path d="M64 22 l4 6 -5 2 5 7" stroke="var(--low)" stroke-width="2.5" stroke-linecap="round"
+        stroke-linejoin="round" fill="none"/>
+  <rect x="72" y="20" width="20" height="24" rx="4" fill="none" stroke="currentColor" stroke-width="3"/>
+  <path d="M76 27 H80 M76 37 H80" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+  <path d="M92 32 H116" stroke="currentColor" stroke-width="3" stroke-linecap="round" fill="none" opacity=".55"/>
+</svg>
+"""
+
+
+def _is_unreachable(error: Optional[str]) -> bool:
+    return bool(error) and any(h in error.lower() for h in _UNREACHABLE_HINTS)
+
+
+def _render_unreachable(error: str, url: str = "", colors: Optional[dict[str, str]] = None) -> None:
+    """Fallback panel shown when a plugin's service cannot be reached."""
+    colors = colors or {"low": "#D55E00", "mid": "#E69F00", "high": "#0072B2"}
+    where = f'<div class="xi-url">{_safe(url)}</div>' if url else ""
+    st.markdown(
+        f'<div class="xi-offline" style="--low:{colors["low"]}">{_UNPLUGGED_SVG}'
+        f'<div class="xi-offline-text"><strong>🔌 Connection lost: the plugin is not answering</strong>'
+        f"<span>{_safe(error)}</span>{where}"
+        "<span class=\"xi-offline-tip\">Check that the plugin service is running on the other laptop, "
+        "that both laptops are on the same network, and that the URL and port are right. "
+        "Then click <strong>Send test</strong> again.</span></div></div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _ago(iso: str) -> str:
     try:
         secs = (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds()
@@ -168,8 +206,12 @@ def _render_plugin_row(
         b1, b2, _ = st.columns([1, 1, 2])
         if b1.button("Send test", key=f"ext_test_{eid}", width="stretch",
                      help="Send a small sample transcript and check the answer. Nothing is saved."):
-            with st.spinner("Waiting for the plugin…"):
-                st.session_state[f"ext_test_res_{eid}"] = client.test_extension(eid, recording_id)
+            with st.spinner("Waiting for the plugin… (up to 10 seconds)"):
+                try:
+                    res = client.test_extension(eid, recording_id)
+                except Exception as exc:  # backend slow or down: never leave the spinner hanging
+                    res = {"ok": False, "error": f"Could not reach the plugin in time ({type(exc).__name__})."}
+                st.session_state[f"ext_test_res_{eid}"] = res
         if b2.button("Remove", key=f"ext_del_{eid}", width="stretch"):
             client.delete_extension(eid)
             st.session_state.pop(f"ext_test_res_{eid}", None)
@@ -182,6 +224,8 @@ def _render_plugin_row(
                 st.success(f"● Connected: a valid answer arrived in {res['elapsed_ms']} ms.")
                 with st.expander("Preview of the answer"):
                     _card_body(res["card"], colors, speaker_name, f"pv_{eid}")
+            elif _is_unreachable(res.get("error")):
+                _render_unreachable(res["error"], ext["url"], colors)
             else:
                 st.error(f"▲ Test failed: {res['error']}")
 
@@ -216,7 +260,8 @@ def render_plugin_results(
         resend = st.button("↻ Send again", width="stretch", help="Send this transcript to every active plugin now.")
 
     try:
-        with st.spinner("Waiting for plugins…" if resend else "Loading plugin results…"):
+        with st.spinner("Waiting for plugins… (up to 10 seconds)" if resend
+                        else "Loading plugin results…"):
             results = client.get_insights(recording_id, refresh=resend)
     except Exception as exc:
         st.warning(f"Could not load plugin results: {exc}")
@@ -255,6 +300,8 @@ def render_plugin_results(
             )
             if item["ok"] and item.get("card"):
                 _card_body(item["card"], colors, speaker_name, item["extension_id"], is_greyscale)
+            elif _is_unreachable(item.get("error")):
+                _render_unreachable(item["error"], colors=colors)
             else:
                 st.markdown(
                     f'<div class="xi-failed" style="{css_vars}"><span class="sym sym-low">▲</span> '

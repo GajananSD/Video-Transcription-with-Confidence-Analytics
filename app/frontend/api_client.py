@@ -140,7 +140,7 @@ class APIClient:
 
     def test_extension(self, extension_id: str, recording_id: Optional[str] = None) -> dict[str, Any]:
         params = {"recording_id": recording_id} if recording_id else None
-        resp = requests.post(f"{self.base_url}/api/v1/extensions/{extension_id}/test", params=params, timeout=20)
+        resp = requests.post(f"{self.base_url}/api/v1/extensions/{extension_id}/test", params=params, timeout=15)
         resp.raise_for_status()
         return resp.json()
 

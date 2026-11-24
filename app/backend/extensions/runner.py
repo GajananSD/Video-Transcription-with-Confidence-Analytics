@@ -7,6 +7,7 @@ import logging
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -21,7 +22,8 @@ from .contract import EVENTS, InsightCard, build_event
 
 logger = logging.getLogger("backend.extensions")
 
-TIMEOUT_S = 8.0
+CONNECT_TIMEOUT_S = 3.0   # an unreachable laptop should fail fast
+TIMEOUT_S = 8.0           # hard upper bound for one whole call (connect + answer)
 MAX_WORKERS = 6
 MAX_RAW_CHARS = 50_000
 
@@ -148,9 +150,23 @@ class ExtensionRepository:
 # ------------------------------------------------------------------ calling
 def _post(url: str, body: dict[str, Any]) -> Any:
     """POST the event and return the decoded JSON. Separate function so tests can replace it."""
-    resp = requests.post(url, json=body, timeout=TIMEOUT_S)
+    resp = requests.post(url, json=body, timeout=(CONNECT_TIMEOUT_S, TIMEOUT_S))
     resp.raise_for_status()
     return resp.json()
+
+
+# requests' timeouts apply per socket operation, so a half-dead peer can stretch a call far
+# past TIMEOUT_S. Calls run on this pool and are abandoned after a wall-clock deadline instead.
+_CALL_POOL = ThreadPoolExecutor(max_workers=MAX_WORKERS * 2, thread_name_prefix="plugin-call")
+
+
+def _post_with_deadline(url: str, body: dict[str, Any]) -> Any:
+    future = _CALL_POOL.submit(_post, url, body)
+    try:
+        return future.result(timeout=TIMEOUT_S + 1)
+    except FutureTimeout:
+        future.cancel()
+        raise requests.exceptions.Timeout() from None
 
 
 def call_extension(ext: ExtensionRecord, body: dict[str, Any]) -> dict[str, Any]:
@@ -158,7 +174,7 @@ def call_extension(ext: ExtensionRecord, body: dict[str, Any]) -> dict[str, Any]
     t0 = time.perf_counter()
     raw = None
     try:
-        answer = _post(ext.url, body)
+        answer = _post_with_deadline(ext.url, body)
         raw = json.dumps(answer, ensure_ascii=False)[:MAX_RAW_CHARS]
         card = InsightCard.model_validate(answer)
         out = {"ok": True, "card": card.model_dump(exclude_none=True), "error": None}
@@ -166,10 +182,14 @@ def call_extension(ext: ExtensionRecord, body: dict[str, Any]) -> dict[str, Any]
         first = exc.errors()[0]
         where = ".".join(str(p) for p in first.get("loc", ())) or "card"
         out = {"ok": False, "card": None, "error": f"The answer is not a valid insight card ({where}: {first['msg']})."}
+    except requests.exceptions.ConnectTimeout:
+        out = {"ok": False, "card": None,
+               "error": f"Could not connect within {CONNECT_TIMEOUT_S:.0f} seconds. Is that laptop on and reachable?"}
     except requests.exceptions.Timeout:
         out = {"ok": False, "card": None, "error": f"No answer within {TIMEOUT_S:.0f} seconds."}
     except requests.exceptions.ConnectionError:
-        out = {"ok": False, "card": None, "error": "Could not connect. Is the extension service running?"}
+        out = {"ok": False, "card": None,
+               "error": "Could not connect. Is the plugin service running and is that laptop on the same network?"}
     except Exception as exc:  # HTTP errors, bad JSON, ...
         out = {"ok": False, "card": None, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
     out["elapsed_ms"] = int((time.perf_counter() - t0) * 1000)

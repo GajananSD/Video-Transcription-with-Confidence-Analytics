@@ -70,6 +70,12 @@ _CSS = """
 .xi-steps { margin: .2rem 0 1rem 1.1rem; padding: 0; line-height: 1.7; }
 .xi-summary { display: flex; gap: 1.2rem; font-size: .9rem; margin: .2rem 0 .8rem; }
 .xi-summary .sym { margin-right: .25rem; }
+.xi-offline { display: flex; align-items: center; gap: 1rem; padding: .8rem 1rem; margin-top: .4rem;
+              border-radius: .5rem; border: 1px dashed var(--low);
+              background: color-mix(in srgb, var(--low) 8%, transparent); }
+.xi-offline-art { width: 110px; flex: 0 0 auto; }
+.xi-offline-text { display: flex; flex-direction: column; gap: .25rem; font-size: .9rem; line-height: 1.45; }
+.xi-offline-tip { font-size: .82rem; opacity: .75; }
 </style>
 """
 
