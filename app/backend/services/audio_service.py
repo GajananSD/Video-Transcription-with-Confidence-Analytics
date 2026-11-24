@@ -131,6 +131,7 @@ class AudioService:
         files = [
             Path(record.filepath),
             settings.processed_dir / f"{recording_id}_16k_norm.wav",
+            settings.processed_dir / "normalized" / f"{recording_id}_16k_norm_16k.wav",
             settings.results_dir / f"{recording_id}.json",
         ]
         files_removed = 0
