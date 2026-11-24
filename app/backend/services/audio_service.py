@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 from backend.config import settings
-from backend.database.models import RecordingRecord, RecordingRepository
+from backend.database.models import JobRepository, RecordingRecord, RecordingRepository
+
+logger = logging.getLogger(__name__)
 
 
 SUPPORTED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
@@ -109,6 +112,44 @@ class AudioService:
         )
         RecordingRepository.create(record)
         return record
+
+    @classmethod
+    def delete_recording(cls, recording_id: str) -> Optional[dict]:
+        """Delete a recording, its transcript, jobs, corrections, plugin results and files.
+
+        Returns None if the recording does not exist. Raises RuntimeError while a job is running.
+        """
+        record = RecordingRepository.get(recording_id)
+        if not record:
+            return None
+        job = JobRepository.get_by_recording(recording_id)
+        if job and job.status in ("queued", "processing"):
+            raise RuntimeError("A transcription job is still running for this recording. Wait for it to finish.")
+
+        removed = RecordingRepository.delete_cascade(recording_id)
+
+        files = [
+            Path(record.filepath),
+            settings.processed_dir / f"{recording_id}_16k_norm.wav",
+            settings.results_dir / f"{recording_id}.json",
+        ]
+        files_removed = 0
+        for f in files:
+            try:
+                f.unlink()
+                files_removed += 1
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                logger.warning("Could not delete %s: %s", f, exc)
+
+        # Corrections from this recording no longer count towards vocabulary/calibration.
+        if removed.get("feedback") or removed.get("calibration_samples"):
+            from .feedback_service import FeedbackService
+
+            FeedbackService.relearn()
+
+        return {"rows_removed": removed, "files_removed": files_removed}
 
     @classmethod
     def prepare_16k_mono_audio(cls, recording_id: str) -> Path:

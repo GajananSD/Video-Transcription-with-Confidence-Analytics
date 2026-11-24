@@ -99,6 +99,22 @@ class RecordingRepository:
             for r in rows
         ]
 
+    @staticmethod
+    def delete_cascade(recording_id: str) -> dict[str, int]:
+        """Delete a recording and every row that refers to it, in one transaction.
+
+        Returns the number of rows removed per table (all zero if the recording did not exist).
+        """
+        tables = ("calibration_samples", "feedback", "extension_runs", "transcripts", "jobs", "recordings")
+        conn = get_db_connection()
+        removed: dict[str, int] = {}
+        with conn:
+            for table in tables:
+                cur = conn.execute(f"DELETE FROM {table} WHERE recording_id = ?", (recording_id,))
+                removed[table] = cur.rowcount
+        conn.close()
+        return removed
+
 
 class JobRepository:
     """Persistence operations for asynchronous speech jobs."""

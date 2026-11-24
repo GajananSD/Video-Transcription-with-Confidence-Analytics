@@ -27,6 +27,13 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    def delete_recording(self, recording_id: str) -> dict[str, Any]:
+        resp = requests.delete(f"{self.base_url}/api/v1/media/{recording_id}", timeout=30)
+        if resp.status_code in (404, 409):
+            raise RuntimeError(resp.json().get("detail", resp.text))
+        resp.raise_for_status()
+        return resp.json()
+
     def trigger_transcription(
         self,
         recording_id: str,

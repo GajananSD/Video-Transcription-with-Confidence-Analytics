@@ -131,3 +131,29 @@ def stream_media(recording_id: str) -> FileResponse:
     ext = Path(record.filepath).suffix.lower()
     media_type = _MEDIA_TYPES.get(ext, "application/octet-stream")
     return FileResponse(record.filepath, media_type=media_type, filename=record.filename)
+
+
+@router.delete(
+    "/media/{recording_id}",
+    tags=["Media"],
+    responses={
+        200: json_example(
+            "Recording and everything derived from it deleted",
+            {"status": "deleted", "recording_id": "4d595f83-4dda-44f3-95c2-12f2d1228309"},
+        ),
+        404: error("Unknown recording", "Recording not found."),
+        409: error(
+            "A transcription job is still running",
+            "A transcription job is still running for this recording. Wait for it to finish.",
+        ),
+    },
+)
+def delete_recording(recording_id: str) -> dict[str, object]:
+    """Delete a recording with its transcript, jobs, corrections, plugin results and stored files."""
+    try:
+        result = AudioService.delete_recording(recording_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Recording not found.")
+    return {"status": "deleted", "recording_id": recording_id, **result}

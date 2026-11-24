@@ -217,6 +217,34 @@ with col_recent, st.container(border=True):
             on_change=_on_pick_recording,
             **extra,
         )
+        selected_id = st.session_state.get("past_recording_selector")
+        if selected_id:
+            if st.session_state.get("confirm_delete_id") != selected_id:
+                if st.button("🗑 Delete this recording", key="delete_recording_btn"):
+                    st.session_state["confirm_delete_id"] = selected_id
+                    st.rerun()
+            else:
+                st.warning(
+                    f"Delete **{_recordings_by_id[selected_id]['filename']}**? Its transcript, "
+                    "corrections and stored files are removed permanently."
+                )
+                c_yes, c_no = st.columns(2)
+                if c_yes.button("Yes, delete", type="primary", key="delete_recording_yes"):
+                    try:
+                        client.delete_recording(selected_id)
+                    except Exception as e:
+                        st.error(f"Could not delete: {e}")
+                    else:
+                        st.session_state.pop("confirm_delete_id", None)
+                        st.session_state.pop("past_recording_selector", None)
+                        if st.session_state.get("recording_id") == selected_id:
+                            for k in ("recording_id", "filename", "job_id"):
+                                st.session_state.pop(k, None)
+                        st.toast("Recording deleted.")
+                        st.rerun()
+                if c_no.button("Cancel", key="delete_recording_no"):
+                    st.session_state.pop("confirm_delete_id", None)
+                    st.rerun()
         st.caption(f"{len(ids)} saved, newest first.")
     else:
         st.caption("Nothing yet. Your transcribed files will appear here.")
