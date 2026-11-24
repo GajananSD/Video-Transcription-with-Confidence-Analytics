@@ -46,7 +46,8 @@ The project has two parts: a FastAPI backend that runs the speech models, and a 
 | Disk space | ~3 GB for the Whisper `large-v3` model (downloaded automatically on first run), plus ~2–5 GB for PyTorch. |
 | RAM | 8 GB minimum, 16 GB recommended for `large-v3` on CPU. |
 | GPU (optional) | An NVIDIA GPU with CUDA is much faster. Everything also works on CPU. |
-| Hugging Face account + token | Needed for speaker labels via Pyannote. You must accept the terms of **4 gated models** and put your token in `app/.env`. See [Configuration](#5-configuration-env). |
+| Conda (Miniconda/Anaconda) | For the separate **NeMo** environment that produces speaker labels. See [section 5](#5-configuration-env). |
+| Hugging Face token (fallback only) | Only needed if NeMo can't be set up. Speaker labels then come from Pyannote. |
 
 ---
 
@@ -178,15 +179,138 @@ cp .env.example .env
 Copy-Item .env.example .env
 ```
 
-`.env` holds your private Hugging Face token. It is already listed in `.gitignore`; **never commit it or share it**.
+`.env` is listed in `.gitignore`; **never commit it or share it**.
 
-### Step 2: Get a Hugging Face token
+Speaker labels ("who spoke when") come from **NeMo MSDD + TitaNet** (Step 2). This needs no Hugging Face account. Only if NeMo can't be set up, use the **Hugging Face / Pyannote fallback** ([below](#fallback-hugging-face--pyannote-diarization)).
+
+### Step 2: Set up NeMo diarization (recommended)
+
+NeMo runs in its **own conda environment** named `cs698b_nemo`, because its dependencies conflict with the app's. Do this once, in a new terminal (the app's `.venv` must **not** be active).
+
+**Linux**
+
+```bash
+conda create -n cs698b_nemo python=3.10 -y
+conda activate cs698b_nemo
+
+# PyTorch: CPU build (for an NVIDIA GPU use --index-url https://download.pytorch.org/whl/cu124)
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install Cython
+pip install "nemo_toolkit[asr]==2.7.3"
+
+# Download the models (~150 MB) into ~/.cache/torch/NeMo/
+python -c "from nemo.collections.asr.models import EncDecDiarLabelModel, EncDecSpeakerLabelModel; EncDecDiarLabelModel.from_pretrained('diar_msdd_telephonic', map_location='cpu'); EncDecSpeakerLabelModel.from_pretrained('titanet_large', map_location='cpu'); print('NeMo OK')"
+
+conda deactivate
+```
+
+**Windows (Anaconda Prompt or PowerShell with conda)**
+
+```powershell
+conda create -n cs698b_nemo python=3.10 -y
+conda activate cs698b_nemo
+
+# PyTorch: CPU build (for an NVIDIA GPU use --index-url https://download.pytorch.org/whl/cu124)
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install Cython
+pip install "nemo_toolkit[asr]==2.7.3"
+
+# Download the models (~150 MB) into %USERPROFILE%\.cache\torch\NeMo\
+python -c "from nemo.collections.asr.models import EncDecDiarLabelModel, EncDecSpeakerLabelModel; EncDecDiarLabelModel.from_pretrained('diar_msdd_telephonic', map_location='cpu'); EncDecSpeakerLabelModel.from_pretrained('titanet_large', map_location='cpu'); print('NeMo OK')"
+
+conda deactivate
+```
+
+> NeMo has limited native Windows support. If `pip install nemo_toolkit` fails, run the whole app inside **WSL2** (Ubuntu) using the Linux steps, or use the [Hugging Face fallback](#fallback-hugging-face--pyannote-diarization).
+
+### Step 3: Point the app at NeMo
+
+The app needs **two paths** in `app/.env`:
+
+| Variable | What it is |
+|---|---|
+| `NEMO_PYTHON` | The Python program inside the `cs698b_nemo` conda env |
+| `NEMO_MSDD_CHECKPOINT` | The downloaded NeMo model file `diar_msdd_telephonic.nemo` |
+
+**3a. Find `NEMO_PYTHON`**
+
+Same commands on Linux and Windows:
+
+```bash
+conda activate cs698b_nemo
+python -c "import sys; print(sys.executable.replace(chr(92), '/'))"
+conda deactivate
+```
+
+It prints one path, for example:
+
+```
+Linux:   /home/<you>/miniconda3/envs/cs698b_nemo/bin/python
+Windows: C:/Users/<you>/miniconda3/envs/cs698b_nemo/python.exe
+```
+
+If `conda activate` says the environment is not found, run `conda env list` and use the folder shown for `cs698b_nemo`: add `/bin/python` (Linux) or `/python.exe` (Windows) to it. This happens when more than one conda (e.g. Miniconda and Miniforge) is installed.
+
+**3b. Find `NEMO_MSDD_CHECKPOINT`**
+
+```bash
+# Linux
+find ~/.cache/torch/NeMo -name diar_msdd_telephonic.nemo
+```
+
+```powershell
+# Windows
+(Get-ChildItem -Recurse "$env:USERPROFILE\.cache\torch\NeMo" -Filter diar_msdd_telephonic.nemo).FullName -replace '\\','/'
+```
+
+It prints one path, for example:
+
+```
+Linux:   /home/<you>/.cache/torch/NeMo/NeMo_2.7.3/diar_msdd_telephonic/<hash>/diar_msdd_telephonic.nemo
+Windows: C:/Users/<you>/.cache/torch/NeMo/NeMo_2.7.3/diar_msdd_telephonic/<hash>/diar_msdd_telephonic.nemo
+```
+
+If it prints nothing, the model wasn't downloaded: run the download command from Step 2 again.
+
+**3c. Put both paths in `app/.env`**
+
+Open `app/.env` (Linux: `nano .env`; Windows: `notepad .env`) and add the two lines, pasting the output of 3a and 3b after the `=` (no quotes, no spaces):
+
+```
+NEMO_PYTHON=<output of 3a>
+NEMO_MSDD_CHECKPOINT=<output of 3b>
+```
+
+Example (Linux):
+
+```
+NEMO_PYTHON=/home/alex/miniconda3/envs/cs698b_nemo/bin/python
+NEMO_MSDD_CHECKPOINT=/home/alex/.cache/torch/NeMo/NeMo_2.7.3/diar_msdd_telephonic/3c3697a0a46f945574fa407149975a13/diar_msdd_telephonic.nemo
+```
+
+> On Windows, use forward slashes `/` in `.env` (the commands above already print them that way). On Linux the app can auto-detect both paths, but setting them is safer. On Windows, `NEMO_PYTHON` **must** be set.
+
+On a CPU-only machine also set:
+
+```
+DEVICE=cpu
+COMPUTE_TYPE=int8
+WHISPER_MODEL=small
+```
+
+**Check it works:** after transcribing a file, its result shows `diarization_model: diar_msdd_telephonic.nemo + TitaNet-Large`. If it shows `DIARIZATION_UNAVAILABLE`, the reason is in `diarization_blocker` (usually a wrong path in `.env`).
+
+### Fallback: Hugging Face / Pyannote diarization
+
+Use this **only if NeMo fails**. The app tries NeMo first and falls back to Pyannote when NeMo isn't available and `HF_TOKEN` is set. With neither, it still transcribes, but every word is labelled `Speaker`.
+
+**1. Get a Hugging Face token**
 
 1. Create a free account at <https://huggingface.co> (or log in).
 2. Go to **Settings → Access Tokens** (<https://huggingface.co/settings/tokens>) and click **Create new token**.
 3. Choose the **Read** token type, give it a name, and copy the token (it starts with `hf_`).
 
-### Step 3: Accept the terms of the 4 Hugging Face models
+**2. Accept the terms of the 4 gated models**
 
 The Pyannote models are **gated**: your token only works after you accept each model's user conditions. While logged in **with the same account that owns the token**, open each page below, fill in the short form and click **Agree and access repository**:
 
@@ -199,7 +323,7 @@ The Pyannote models are **gated**: your token only works after you accept each m
 
 Skipping any of them causes a `403` / gated-model error when diarization runs.
 
-### Step 4: Add the token to `.env`
+**3. Add the token to `.env`**
 
 Open `app/.env` in a text editor (Linux: `nano .env` or `gedit .env`; Windows: `notepad .env`), find this line:
 
@@ -223,7 +347,8 @@ All other settings have sensible defaults. Change them in the same `.env` file i
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `HF_TOKEN` | *(none)* | Enables **speaker labels** via Pyannote. Without it, words are labelled `Speaker`. |
+| `NEMO_PYTHON` / `NEMO_MSDD_CHECKPOINT` | auto-detected (Linux) | NeMo diarization environment and checkpoint ([Step 3](#step-3-point-the-app-at-nemo)) |
+| `HF_TOKEN` | *(none)* | Fallback: speaker labels via Pyannote when NeMo isn't available |
 | `WHISPER_MODEL` | `large-v3` | Use `small` or `medium` for faster (less accurate) transcription on CPU |
 | `DEVICE` | `auto` | `auto` uses the GPU if there is one; set `cpu` or `cuda` to force |
 | `COMPUTE_TYPE` | `auto` | Use `int8` on CPU, `float16` on a GPU with ≥ 6 GB VRAM |
@@ -233,26 +358,7 @@ All other settings have sensible defaults. Change them in the same `.env` file i
 | `STORAGE_DIR` | `storage` | Uploads, processed audio and results |
 | `MAX_UPLOAD_SIZE_MB` | `250` | Upload size limit |
 | `MAX_DURATION_SECONDS` | `1800` | Maximum media length (30 min) |
-| `NEMO_PYTHON` / `NEMO_MSDD_CHECKPOINT` | auto-detected | Optional NeMo diarization environment (see below) |
 | `APP_DB_PATH` | `storage/app.db` | SQLite database location |
-
-### Optional: NeMo MSDD diarization
-
-When it is available, NeMo MSDD + TitaNet is the primary diarizer. It runs in a **separate** Python environment because NeMo's dependencies conflict with the app's. If you have one, point the app at it in `.env`:
-
-```
-# Linux
-NEMO_PYTHON=/path/to/envs/cs698b_nemo/bin/python
-NEMO_MSDD_CHECKPOINT=/path/to/diar_msdd_telephonic.nemo
-
-# Windows (use forward slashes or doubled backslashes)
-NEMO_PYTHON=C:/Users/<you>/miniconda3/envs/cs698b_nemo/python.exe
-NEMO_MSDD_CHECKPOINT=C:/path/to/diar_msdd_telephonic.nemo
-```
-
-If these aren't set, the app looks for a conda env named `cs698b_nemo` under `~/anaconda3`, `~/miniconda3`, `~/miniforge3`, `~/mambaforge` or `~/.conda`, and for the checkpoint under `~/.cache/torch/NeMo/`. If neither is found, it falls back to Pyannote (when `HF_TOKEN` is set). With neither, it transcribes without speaker labels.
-
-> **Windows:** auto-detection only finds Linux-style paths, so set `NEMO_PYTHON` explicitly. NeMo has limited Windows support; Pyannote is the simpler choice there.
 
 ---
 
@@ -364,7 +470,7 @@ Then register `http://127.0.0.1:8300/insight` in **🧩 Plugins** and click **Se
 
 ## 8. Stopping the app
 
-Press **`Ctrl+C`** in each terminal, then leave the virtual environment (same command on every OS):
+Press **`Ctrl+C`** in each terminal (press it again if the backend waits on a running job), then leave the virtual environment (same command on every OS):
 
 ```bash
 deactivate
@@ -582,8 +688,10 @@ app/
 | Symptom | Fix |
 |---|---|
 | Sidebar shows **Backend offline** | Start the backend (Terminal 1) and check the URL in the sidebar is `http://127.0.0.1:8000`. |
-| Every word is labelled `Speaker` | Diarization isn't configured. Create `app/.env`, add `HF_TOKEN` and accept the terms of all 4 Pyannote models ([section 5](#5-configuration-env)). |
-| `403` / gated model error | You haven't accepted the terms on **all 4** Pyannote model pages ([Step 3](#step-3-accept-the-terms-of-the-4-hugging-face-models)) with the account that owns the token. |
+| Every word is labelled `Speaker` | Diarization isn't configured. Set up NeMo ([Step 2](#step-2-set-up-nemo-diarization-recommended)), or use the [Hugging Face fallback](#fallback-hugging-face--pyannote-diarization). The reason is in the result's `diarization_blocker`. |
+| `NeMo Python executable not found` / `checkpoint not found` | Fix `NEMO_PYTHON` / `NEMO_MSDD_CHECKPOINT` in `app/.env` ([Step 3](#step-3-point-the-app-at-nemo)) and restart the backend. |
+| NeMo diarization times out on long files | On CPU the NeMo step can exceed its 300 s limit. Raise `timeout_seconds` in `engine/nemo_diarizer.py`, or use a GPU. |
+| `403` / gated model error (fallback) | You haven't accepted the terms on **all 4** Pyannote model pages with the account that owns the token. |
 | `401` / invalid token error | The token in `app/.env` is wrong, expired or revoked. Create another **Read** token and update `HF_TOKEN`. |
 | `FFmpeg preprocessing failed` | Install FFmpeg ([section 3](#3-install-system-packages)) and make sure `ffmpeg -version` works in the same terminal. |
 | Linux: `ensurepip is not available` when creating the venv | `sudo apt install python3-venv` (or `python3.X-venv` for your exact version). |
