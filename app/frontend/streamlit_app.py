@@ -66,6 +66,11 @@ def speaker_number_map(*label_lists) -> dict[str, str]:
     return mapping
 
 
+@st.cache_data(show_spinner=False, max_entries=4)
+def _load_media(base_url: str, rec_id: str) -> tuple[bytes, str]:
+    return APIClient(base_url).get_media_bytes(rec_id)
+
+
 def fmt_duration(seconds: float) -> str:
     seconds = max(0, int(round(seconds)))
     return f"{seconds // 60}:{seconds % 60:02d}"
@@ -388,7 +393,10 @@ with st.container(border=True):
         st.markdown(f"#### {transcript_res.get('filename', current_filename)}")
         st.caption(f"Recording `{current_recording_id[:8]}` · {fmt_duration(total_dur)} long")
     with head_r:
-        st.audio(client.get_stream_url(current_recording_id))
+        # Pass bytes, not the backend URL: a URL is fetched by the viewer's
+        # browser, and 127.0.0.1 there is the viewer's own machine.
+        media_bytes, media_mime = _load_media(client.base_url, current_recording_id)
+        st.audio(media_bytes, format=media_mime)
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Duration", fmt_duration(total_dur), border=True)

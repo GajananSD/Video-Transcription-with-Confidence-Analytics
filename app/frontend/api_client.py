@@ -163,3 +163,10 @@ class APIClient:
 
     def get_stream_url(self, recording_id: str) -> str:
         return f"{self.base_url}/api/v1/media/{recording_id}/stream"
+
+    def get_media_bytes(self, recording_id: str) -> tuple[bytes, str]:
+        """Fetch the recording server-side so the browser never needs to reach the backend."""
+        resp = requests.get(self.get_stream_url(recording_id), timeout=60)
+        resp.raise_for_status()
+        mime = resp.headers.get("content-type", "audio/wav").split(";")[0]
+        return resp.content, mime
